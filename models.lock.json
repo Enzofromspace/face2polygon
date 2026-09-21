@@ -1,0 +1,15 @@
+{
+  "baseUrl": "https://github.com/PINTO0309/High-Angle_Robust_Fast_FaceAlignment/releases/download/weights",
+  "files": [
+    {
+      "name": "hrffa_hg0_ibug68_1x3x256x256.onnx",
+      "bytes": 6869275,
+      "sha256": "2b770365053dd9f8cc4f57819da0bfa57a2417360e518eeba3bbad8a2201b468"
+    },
+    {
+      "name": "yolov9_n_wholebody34_0100_1x3x640x640.onnx",
+      "bytes": 3221705,
+      "sha256": "a5ece478fc918787258afccd0b313e54319f8f39aeb1ceca11f27dbd269e78bc"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+reference/hrffa/
+node_modules/
+dist/
+models/
+public/models/
+public/wasm/
+.DS_Store
+test-results/
+playwright-report/
