@@ -4,12 +4,17 @@ export interface Point {
     x: number;
     y: number;
     z: number;
+    mouth?: boolean;
 }
 const coarse = [0, 3, 5, 8, 11, 13, 16, 17, 19, 21, 22, 24, 26, 27, 30, 31, 33, 35, 36, 39, 42, 45, 48, 51, 54, 57];
-const medium = [1, 4, 6, 10, 12, 15, 28, 37, 40, 43, 46, 49, 53, 55, 59, 62, 66];
+// Add facial landmarks progressively, but keep a sparse, speech-friendly lip mesh.
+// Closely packed lip contours produce sliver triangles when the mouth closes.
+const extra = [1, 15, 4, 12, 6, 10, 28, 37, 43, 40, 46, 2, 14, 7, 9, 18, 25, 20, 23, 29, 32, 34, 38, 44, 41, 47];
+const mouthIds = [48, 51, 54, 57, 62, 66];
 export function meshPoints(head: HeadResult, detail: number): Point[] {
-    const p = (i: number): Point => ({ x: head.points[i * 2], y: head.points[i * 2 + 1], z: i === 30 ? 0.34 : i >= 27 && i <= 35 ? 0.22 : i >= 48 ? 0.1 : 0 });
-    const ids = detail === 0 ? coarse : detail === 1 ? [...coarse, ...medium] : Array.from({ length: 68 }, (_, i) => i);
+    const p = (i: number): Point => ({ x: head.points[i * 2], y: head.points[i * 2 + 1], z: i === 30 ? 0.34 : i >= 27 && i <= 35 ? 0.22 : i >= 48 ? 0.1 : 0, mouth: i >= 48 });
+    const level = Number.isFinite(detail) ? Math.max(0, Math.min(2, detail)) : 0;
+    const ids = [...coarse.filter(i => i < 48), ...mouthIds, ...extra.slice(0, Math.round(level / 2 * extra.length))];
     const points = ids.map(p);
     // Roll-aware upper skull: eye axis defines right; chin defines down.
     const left = p(36), right = p(45), chin = p(8);
@@ -46,36 +51,54 @@ export class PolygonMesh {
             if (fresh || !old)
                 return p;
             const motion = Math.hypot(p.x - old.x, p.y - old.y) / scale;
-            const alpha = 1 - Math.exp(-elapsed / (motion > 0.05 ? 45 : 110));
-            return { x: old.x + (p.x - old.x) * alpha, y: old.y + (p.y - old.y) * alpha, z: p.z };
+            // Lips need to follow small syllable movements without the face
+            // smoothing swallowing them. Retain a little filtering for jitter.
+            const response = p.mouth ? 28 : motion > 0.05 ? 45 : 110;
+            const alpha = 1 - Math.exp(-Math.max(0, elapsed) / response);
+            return { ...p, x: old.x + (p.x - old.x) * alpha, y: old.y + (p.y - old.y) * alpha };
         });
         // Freeze topology until detail or subject changes: no diagonal flicker.
         if (fresh) {
-            this.triangles = Array.from(Delaunator.from(this.points, p => p.x, p => p.y).triangles);
+            // Seed lips in a slightly open pose so a closed mouth on the first
+            // frame cannot merge the upper/lower vertices out of the topology.
+            const lips = this.points.filter(p => p.mouth);
+            const [left, , right] = lips;
+            const dx = right.x - left.x, dy = right.y - left.y;
+            const center = { x: (left.x + right.x) / 2, y: (left.y + right.y) / 2 };
+            const pose = [[-0.5, 0], [0, -0.22], [0.5, 0], [0, 0.22], [0, -0.09], [0, 0.09]];
+            let lip = 0;
+            const seed = this.points.map(p => {
+                if (!p.mouth) return p;
+                const [x, y] = pose[lip++];
+                return { x: center.x + dx * x - dy * y, y: center.y + dy * x + dx * y };
+            });
+            this.triangles = Array.from(Delaunator.from(seed, p => p.x, p => p.y).triangles);
             this.colors = [];
         }
     }
-    draw(ctx: CanvasRenderingContext2D, frame: ImageData, debug: boolean) {
+    draw(ctx: CanvasRenderingContext2D, frame: ImageData, debug: boolean, updateColors = true) {
         const { data, width, height } = frame;
         const sample = (x: number, y: number) => {
             const offset = (Math.max(0, Math.min(height - 1, Math.round(y))) * width + Math.max(0, Math.min(width - 1, Math.round(x)))) * 4;
             return [data[offset], data[offset + 1], data[offset + 2]];
         };
         for (let i = 0; i < this.triangles.length; i += 3) {
-            const [a, b, c] = this.triangles.slice(i, i + 3).map(j => this.points[j]);
+            const a = this.points[this.triangles[i]], b = this.points[this.triangles[i + 1]], c = this.points[this.triangles[i + 2]];
             const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
             if (Math.abs(area) < 0.5)
                 continue;
-            const cx = (a.x + b.x + c.x) / 3, cy = (a.y + b.y + c.y) / 3;
-            const samples = [sample(cx, cy), ...([a, b, c].map(p => sample(cx * 0.6 + p.x * 0.4, cy * 0.6 + p.y * 0.4)))];
-            const depth = width * 0.25;
-            const nx = ((b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y)) * depth;
-            const ny = ((b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z)) * depth;
-            const sign = area < 0 ? -1 : 1;
-            const light = Math.max(0.64, Math.min(1.2, 0.91 + (-nx * 0.3 - ny * 0.4 + Math.abs(area) * 0.16) * sign / Math.hypot(nx, ny, area)));
-            const color = [0, 1, 2].map(channel => Math.max(0, Math.min(255, Math.round(samples.reduce((sum, s) => sum + s[channel], 0) / 4 * light / 12) * 12)));
-            const old = this.colors[i];
-            this.colors[i] = color.map((v, j) => old ? old[j] * 0.6 + v * 0.4 : v);
+            if (updateColors || !this.colors[i]) {
+                const cx = (a.x + b.x + c.x) / 3, cy = (a.y + b.y + c.y) / 3;
+                const samples = [sample(cx, cy), ...([a, b, c].map(p => sample(cx * 0.6 + p.x * 0.4, cy * 0.6 + p.y * 0.4)))];
+                const depth = width * 0.25;
+                const nx = ((b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y)) * depth;
+                const ny = ((b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z)) * depth;
+                const sign = area < 0 ? -1 : 1;
+                const light = Math.max(0.64, Math.min(1.2, 0.91 + (-nx * 0.3 - ny * 0.4 + Math.abs(area) * 0.16) * sign / Math.hypot(nx, ny, area)));
+                const color = [0, 1, 2].map(channel => Math.max(0, Math.min(255, Math.round(samples.reduce((sum, s) => sum + s[channel], 0) / 4 * light / 12) * 12)));
+                const old = this.colors[i];
+                this.colors[i] = color.map((v, j) => old ? old[j] * 0.6 + v * 0.4 : v);
+            }
             ctx.fillStyle = `rgb(${this.colors[i].map(Math.round).join(',')})`;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);

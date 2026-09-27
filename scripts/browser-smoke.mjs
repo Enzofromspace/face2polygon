@@ -12,6 +12,17 @@ try {
    assert.equal(await button.getAttribute('aria-pressed'),'true');
    assert.equal(await page.locator('.mask-option[aria-pressed=true]').count(),1);
  }
+ const detail = page.getByRole('slider');
+ assert.equal(await detail.getAttribute('max'), '100');
+ await detail.fill('80');
+ assert.equal(await detail.getAttribute('aria-valuetext'), '80% detail');
+ await page.getByRole('button',{name:'Fox',exact:true}).click();
+ assert.equal(await detail.getAttribute('max'), '2');
+ await detail.fill('2');
+ await page.getByRole('button',{name:'Your face',exact:true}).click();
+ assert.equal(await detail.inputValue(), '80');
+ await detail.focus(); await page.keyboard.press('ArrowRight');
+ assert.equal(await detail.inputValue(), '81');
  await page.getByRole('button',{name:'Enable camera'}).click();
  const monitor=setInterval(async()=>{console.log('Status:',await page.getByRole('status').textContent().catch(()=>''),await page.getByRole('alert').allTextContents().catch(()=>[]));},10000);
  monitor.unref();

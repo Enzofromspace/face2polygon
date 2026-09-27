@@ -22,3 +22,8 @@ test('all four masks have distinct art and increasing geometry detail', () => {
     }
     assert.equal(signatures.size,4);
 });
+test('small valid faces do not silently lose the overlay transform', () => {
+    const points = new Float32Array(136).fill(200);
+    points.set([197, 200], 72); points.set([203, 200], 90); points.set([200, 207], 16);
+    assert.ok(maskTransform({ points, box: { x1: 195, y1: 195, x2: 205, y2: 208, score: 1 }, visibility: new Uint8Array(68) }));
+});

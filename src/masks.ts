@@ -83,7 +83,7 @@ export function maskTransform(head: HeadResult): number[] | null {
     const dx = p[90]-p[72], dy = p[91]-p[73];
     const cx = (p[72]+p[90])/2, cy = (p[73]+p[91])/2;
     const transform = [dx/120,dy/120,(p[16]-cx)/140,(p[17]-cy)/140,cx,cy];
-    if (!transform.every(Number.isFinite) || Math.hypot(dx,dy)<10 || Math.abs(transform[0]*transform[3]-transform[1]*transform[2])<0.05) return null;
+    if (!transform.every(Number.isFinite) || Math.hypot(dx,dy)<5 || Math.abs(dx*(p[17]-cy)-dy*(p[16]-cx))/Math.hypot(dx,dy)<5) return null;
     return transform;
 }
 export class PolygonMask {
@@ -94,7 +94,9 @@ export class PolygonMask {
     update(head: HeadResult, elapsed: number) {
         const next = maskTransform(head);
         if (!next) { this.reset(); return; }
-        const alpha = 1-Math.exp(-Math.max(0,elapsed)/65);
+        const scale = Math.max(10, Math.hypot(next[0], next[1]) * 120);
+        const motion = this.transform ? Math.hypot(next[4]-this.transform[4], next[5]-this.transform[5])/scale : 0;
+        const alpha = 1-Math.exp(-Math.max(0,elapsed)/(motion > 0.05 ? 20 : 65));
         this.transform = next.map((v,i)=>this.transform ? this.transform[i]+(v-this.transform[i])*alpha : v);
     }
     draw(ctx: CanvasRenderingContext2D, id: Exclude<MaskId,'default'>, detail: number, debug: boolean) {

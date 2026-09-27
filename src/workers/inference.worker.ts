@@ -3,10 +3,13 @@ import { HeadDetector } from '../hrffa/detector';
 import { FaceAligner } from '../hrffa/aligner';
 import { loadOrtModel } from '../runtime/ort';
 import { setAssetBaseUrl, type OrtModel } from '../runtime/engine';
-import type { FrameSource, HeadBox } from '../hrffa/types';
+import { PrimaryHeadSelector } from '../runtime/head-selection';
+import { validHead } from '../runtime/tracking';
+import type { FrameSource } from '../hrffa/types';
 let detector: HeadDetector;
 let aligner: FaceAligner;
-let previous: HeadBox | undefined;
+const selection = new PrimaryHeadSelector();
+let frameCanvas: OffscreenCanvas | undefined;
 const models: OrtModel[] = [];
 function source(canvas: OffscreenCanvas): FrameSource {
     return { width: canvas.width, height: canvas.height,
@@ -31,23 +34,15 @@ async function handle(msg: any) {
     }
     else if (msg.type === 'frame') {
         const start = performance.now();
-        const canvas = new OffscreenCanvas(msg.width, msg.height);
+        const canvas = frameCanvas ??= new OffscreenCanvas(msg.width, msg.height);
+        if (canvas.width !== msg.width) canvas.width = msg.width;
+        if (canvas.height !== msg.height) canvas.height = msg.height;
         canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(msg.rgba), msg.width, msg.height), 0, 0);
         const src = source(canvas);
         const boxes = await detector.detect(src);
-        // Prefer spatial continuity, then the largest head on initial acquisition.
-        const area = (b: HeadBox) => (b.x2 - b.x1) * (b.y2 - b.y1);
-        const rank = (b: HeadBox) => {
-            if (!previous)
-                return area(b);
-            const distance = Math.hypot((b.x1 + b.x2 - previous.x1 - previous.x2) / 2, (b.y1 + b.y2 - previous.y1 - previous.y2) / 2);
-            return area(b) / (1 + distance * distance / 400);
-        };
-        boxes.sort((a, b) => rank(b) - rank(a));
-        const box = boxes[0];
-        const switched = !!box && !!previous && Math.hypot(box.x1 - previous.x1, box.y1 - previous.y1) > Math.max(previous.x2 - previous.x1, previous.y2 - previous.y1) * 0.7;
-        previous = box;
-        const head = box ? (await aligner.align(src, [box]))[0] : null;
+        const { box, switched } = selection.update(boxes, performance.now());
+        const aligned = box ? (await aligner.align(src, [box]))[0] : null;
+        const head = validHead(aligned) ? aligned : null;
         self.postMessage({ type: 'result', head, switched, ms: performance.now() - start });
     }
 }
