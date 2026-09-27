@@ -7,6 +7,11 @@ try {
  page.on('console',msg=>{if(msg.type()==='error')console.log('browser console:',msg.text().slice(0,300));});
  await page.goto(process.env.APP_URL||'http://127.0.0.1:5173/?backend=wasm');
  await page.screenshot({path:'/tmp/face2polygon-initial.png',fullPage:true});
+ for(const name of ['Fox','Metal','Fawkes','Dalí','Your face']) {
+   const button=page.getByRole('button',{name,exact:true}); await button.click();
+   assert.equal(await button.getAttribute('aria-pressed'),'true');
+   assert.equal(await page.locator('.mask-option[aria-pressed=true]').count(),1);
+ }
  await page.getByRole('button',{name:'Enable camera'}).click();
  const monitor=setInterval(async()=>{console.log('Status:',await page.getByRole('status').textContent().catch(()=>''),await page.getByRole('alert').allTextContents().catch(()=>[]));},10000);
  monitor.unref();
@@ -25,6 +30,7 @@ try {
  if(!process.env.APP_URL) {
  const meshResult=await page.evaluate(async()=>{
    const {PolygonMesh}=await import('/src/mesh.ts');
+   const {PolygonMask}=await import('/src/masks.ts');
    const points=new Float32Array(136);
    for(let i=0;i<68;i++){points[i*2]=320+100*Math.cos(i*2.4);points[i*2+1]=260+100*Math.sin(i*2.4);}
    points.set([260,220],72);points.set([380,220],90);points.set([320,380],16);
@@ -32,8 +38,23 @@ try {
    const frame=new ImageData(640,480);for(let i=0;i<frame.data.length;i+=4){frame.data.set([160,120,90,255],i);}
    const c=document.querySelector('canvas');const ctx=c.getContext('2d');ctx.clearRect(0,0,640,480);mesh.draw(ctx,frame,false);
    const data=ctx.getImageData(0,0,640,480).data;let opaque=0;for(let i=3;i<data.length;i+=4)if(data[i])opaque++;
-   return {opaque,corner:data[3],facets:mesh.triangles.length/3};
+   const overlay = new PolygonMask();
+   overlay.update({box:{x1:200,y1:80,x2:440,y2:400,score:1},points,visibility:new Uint8Array(68).fill(2)},33);
+   const masks=[];
+   for(const id of ['fox','metal','fawkes','dali']) {
+     ctx.clearRect(0,0,640,480); const facets=overlay.draw(ctx,id,0,false);
+     const pixels=ctx.getImageData(0,0,640,480).data;
+     let covered=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i])covered++;
+     masks.push({id,facets,covered,corner:pixels[3],image:c.toDataURL()});
+   }
+   overlay.reset();ctx.clearRect(0,0,640,480);
+   const resetFacets=overlay.draw(ctx,'fox',0,false);
+   return {opaque,corner:data[3],facets:mesh.triangles.length/3,masks,resetFacets};
  });
- assert.ok(meshResult.opaque>10000);assert.equal(meshResult.corner,0);console.log('Polygon rendering passed:',meshResult);
+ assert.ok(meshResult.opaque>10000);assert.equal(meshResult.corner,0);console.log('Polygon rendering passed.');
+ assert.equal(meshResult.resetFacets,0);
+ assert.equal(new Set(meshResult.masks.map(m=>m.image)).size,4);
+ for(const mask of meshResult.masks){assert.ok(mask.covered>10000);assert.equal(mask.corner,0);assert.ok(mask.facets>30);}
+ console.log('Four distinct mask overlays and tracking reset passed.');
  }
 }finally{await browser.close();}
